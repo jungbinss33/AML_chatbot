@@ -19,22 +19,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def get_secret(key):
-    """Streamlit Secrets > 환경변수 순으로 API 키 읽기"""
-    try:
-        return st.secrets[key]
-    except (KeyError, FileNotFoundError):
-        return os.environ.get(key, '')
-
 with st.sidebar:
     st.header('API 설정')
     openai_key = st.text_input(
         'OpenAI API Key', type='password',
-        value=get_secret('OPENAI_API_KEY')
+        value=os.environ.get('OPENAI_API_KEY', '')
     )
     tavily_key = st.text_input(
         'Tavily API Key', type='password',
-        value=get_secret('TAVILY_API_KEY')
+        value=os.environ.get('TAVILY_API_KEY', '')
     )
     if openai_key:
         os.environ['OPENAI_API_KEY'] = openai_key
@@ -85,14 +78,14 @@ TEUKGEUMBEOP_TEXT = (
 )
 
 
-@st.cache_resource
-def setup_rag():
+def setup_rag(api_key):
+    """API 키가 있을 때만 RAG 초기화"""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800, chunk_overlap=200,
         separators=['\n\n', '\n', '\u203b', '\uc81c', '. ', ' ']
     )
     chunks = splitter.split_text(TEUKGEUMBEOP_TEXT)
-    emb = OpenAIEmbeddings(model='text-embedding-3-small')
+    emb = OpenAIEmbeddings(model='text-embedding-3-small', api_key=api_key)
     vs = Chroma.from_texts(texts=chunks, embedding=emb, collection_name='teukgeumbeop')
     return vs.as_retriever(search_type='similarity', search_kwargs={'k': 4})
 
@@ -168,10 +161,10 @@ if user_input := st.chat_input('질문을 입력하세요...'):
         st.markdown(user_input)
     with st.chat_message('assistant'):
         with st.spinner('답변 생성 중...'):
-            llm = ChatOpenAI(model='gpt-4o-mini', temperature=0)
+            llm = ChatOpenAI(model='gpt-4o-mini', temperature=0, api_key=openai_key)
             category = classify_query(user_input, llm)
             if category == '특금법':
-                retriever = setup_rag()
+                retriever = setup_rag(openai_key)
                 answer = rag_query(user_input, retriever, llm)
                 cat_label = '특금법 (RAG)'
             else:
