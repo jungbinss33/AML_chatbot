@@ -19,15 +19,22 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def get_secret(key):
+    """Streamlit Secrets > 환경변수 순으로 API 키 읽기"""
+    try:
+        return st.secrets[key]
+    except (KeyError, FileNotFoundError):
+        return os.environ.get(key, '')
+
 with st.sidebar:
     st.header('API 설정')
     openai_key = st.text_input(
         'OpenAI API Key', type='password',
-        value=os.environ.get('OPENAI_API_KEY', '')
+        value=get_secret('OPENAI_API_KEY')
     )
     tavily_key = st.text_input(
         'Tavily API Key', type='password',
-        value=os.environ.get('TAVILY_API_KEY', '')
+        value=get_secret('TAVILY_API_KEY')
     )
     if openai_key:
         os.environ['OPENAI_API_KEY'] = openai_key
