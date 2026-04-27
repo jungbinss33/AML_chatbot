@@ -1,8 +1,9 @@
 import streamlit as st
 import os
+import numpy as np
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
 from tavily import TavilyClient
 
@@ -79,20 +80,19 @@ TEUKGEUMBEOP_TEXT = (
 
 
 def setup_rag(api_key):
-    """API 키가 있을 때만 RAG 초기화"""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800, chunk_overlap=200,
-        separators=['\n\n', '\n', '\u203b', '\uc81c', '. ', ' ']
+        separators=['\n\n', '\n', '. ', ' ']
     )
     chunks = splitter.split_text(TEUKGEUMBEOP_TEXT)
     emb = OpenAIEmbeddings(model='text-embedding-3-small', api_key=api_key)
-    vs = Chroma.from_texts(texts=chunks, embedding=emb, collection_name='teukgeumbeop')
+    vs = FAISS.from_texts(texts=chunks, embedding=emb)
     return vs.as_retriever(search_type='similarity', search_kwargs={'k': 4})
 
 
 def rag_query(question, retriever, llm):
     docs = retriever.invoke(question)
-    context = chr(10).join(doc.page_content for doc in docs)
+    context = '\n'.join(doc.page_content for doc in docs)
     prompt = PromptTemplate(
         template=(
             '당신은 한국 특금법 전문가입니다.\n'
@@ -117,11 +117,11 @@ def tavily_search(query, api_key):
             parts.append(f'[Tavily 요약] {answer}')
         for i, r in enumerate(results[:3], 1):
             parts.append(
-                f'{chr(10)}[출처 {i}] {r.get("title", "")}'
-                f'{chr(10)}{r.get("content", "")[:300]}'
-                f'{chr(10)}URL: {r.get("url", "")}'
+                f'\n[출처 {i}] {r.get("title", "")}'
+                f'\n{r.get("content", "")[:300]}'
+                f'\nURL: {r.get("url", "")}'
             )
-        return chr(10).join(parts)
+        return '\n'.join(parts)
     except Exception as e:
         return f'웹 검색 오류: {str(e)}'
 
@@ -161,23 +161,31 @@ if user_input := st.chat_input('질문을 입력하세요...'):
         st.markdown(user_input)
     with st.chat_message('assistant'):
         with st.spinner('답변 생성 중...'):
-            llm = ChatOpenAI(model='gpt-4o-mini', temperature=0, api_key=openai_key)
-            category = classify_query(user_input, llm)
-            if category == '특금법':
-                retriever = setup_rag(openai_key)
-                answer = rag_query(user_input, retriever, llm)
-                cat_label = '특금법 (RAG)'
-            else:
-                search_result = tavily_search(user_input, tavily_key)
-                synth = (
-                    f'다음 웹 검색 결과를 바탕으로 질문에 한국어로 답변하세요.'
-                    f'{chr(10)}{chr(10)}질문: {user_input}'
-                    f'{chr(10)}{chr(10)}검색 결과:{chr(10)}{search_result}'
-                    f'{chr(10)}{chr(10)}답변:'
-                )
-                resp = llm.invoke(synth)
-                answer = resp.content
-                cat_label = '일반 (Tavily)'
+            try:
+                llm = ChatOpenAI(model='gpt-4o-mini', temperature=0, api_key=openai_key)
+                category = classify_query(user_input, llm)
+                if category == '특금법':
+                    retriever = setup_rag(openai_key)
+                    answer = rag_query(user_input, retriever, llm)
+                    cat_label = '특금법 (RAG)'
+                else:
+                    if not tavily_key:
+                        answer = '사이드바에서 Tavily API Key를 입력해주세요.'
+                        cat_label = '일반 (키 없음)'
+                    else:
+                        search_result = tavily_search(user_input, tavily_key)
+                        synth = (
+                            f'다음 웹 검색 결과를 바탕으로 질문에 한국어로 답변하세요.'
+                            f'\n\n질문: {user_input}'
+                            f'\n\n검색 결과:\n{search_result}'
+                            f'\n\n답변:'
+                        )
+                        resp = llm.invoke(synth)
+                        answer = resp.content
+                        cat_label = '일반 (Tavily)'
+            except Exception as e:
+                answer = f'오류가 발생했습니다: {str(e)}'
+                cat_label = '오류'
             is_law = '특금법' in cat_label
             cls = 'category-badge-law' if is_law else 'category-badge-general'
             lbl = '[특금법]' if is_law else '[일반]'
